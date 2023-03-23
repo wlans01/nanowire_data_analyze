@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import datetime
 import time
+from originlab_graphing import OriginLabGraphing
 
 '''
 FTIR 데이터를 정리하는 코드
@@ -25,6 +26,8 @@ Bruker OPUS Reader 모듈을 사용해서 opus 뷰어 실행할 필요 없이 �
 '''
 
 # 폴더 파일 만들기
+
+
 def create_file_or_folder(name, path, is_folder=False):
     """
     Creates a new file or folder at the specified path.
@@ -56,9 +59,8 @@ def main():
     create_file_or_folder(date, result_path, is_folder=True)
     result_save_path = os.path.join(result_path, date)
 
-
     # x 데어터 얻기 (wavenumbers)
-    with open('x_data.txt','r') as f:
+    with open('x_data.txt', 'r') as f:
         x_data = f.read().splitlines()
 
     # data폴더에서 작업파일 얻기  (data폴더에는 1-1등 정리된 폴더안에 실험결과 파일이 있어야함)
@@ -66,13 +68,13 @@ def main():
     print(f'변환 할 폴더 갯수 : {len(data_list)}')
 
     # 폴더 찾기
-    for i ,d in enumerate(data_list):
+    for i, d in enumerate(data_list):
         file_lsit = os.listdir(os.path.join(data_path, d))
 
         # 데이터 프레임 만들기 빈
         df = pd.DataFrame(index=x_data)
         # 파일 찾기
-        for j , f in enumerate(file_lsit):
+        for j, f in enumerate(file_lsit):
             # 찾은 파일들 데이터 프레임에 넣기
             opus_data = read_file(os.path.join(data_path, d, f))
             ab = opus_data['AB'][:-1]
@@ -85,11 +87,15 @@ def main():
         # 데이터 저장
         df.to_csv(os.path.join(result_save_path, f'{d}.csv'))
 
+    og = OriginLabGraphing(data_path=result_save_path,
+                           result_path=os.path.join(work_path, 'origin_result'))
 
-    end_time = time.time()   
+    og.graphing()
+
+    end_time = time.time()
     work_time = end_time - start_time
     print(f'걸린 시간 : {work_time}')
 
+
 if __name__ == "__main__":
     main()
-    
