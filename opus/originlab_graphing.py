@@ -32,11 +32,18 @@ class OriginLabGraphing:
         graph = op.new_graph(f"{name}_{scale}")
         gl = graph[0]
         plot = gl.add_plot(wks, coly=1, colx=0, type='line', colyerr=2)
+
+        # Customize Plot
+        plot.color = '#000000'
+        plot.set_cmd('-w 1000')
+
+        # Customize Graph
         gl.set_xlim(scale, 800)
         gl.group()
         gl.rescale('x')
         gl.axis('x').title = 'Wavenumber (cm-1)'
         gl.axis('y').title = 'Transmittance'
+        gl.set_int('showframe', 1)
 
         # Customize Legend
         lgnd = gl.label('Legend')
