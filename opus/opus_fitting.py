@@ -6,6 +6,7 @@ import time
 from originlab_graphing import OriginLabGraphing
 import numpy as np
 from scipy.optimize import curve_fit
+import logging
 
 '''
 FTIR 데이터를 정리하는 코드
@@ -26,6 +27,12 @@ Bruker OPUS Reader 모듈을 사용해서 opus 뷰어 실행할 필요 없이 �
 !!! 뷰어에서는 TR값을 찾지만 모듈에서는 AB값을 찾음 같은 값인것 확인했는데 한번더 확인 필요 !!!
 
 '''
+# Set up logging
+timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_filename = f'error_log_{timestamp}.log'
+
+logging.basicConfig(filename=log_filename, level=logging.ERROR,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 폴더 파일 만들기
 
@@ -80,6 +87,7 @@ def main():
     data_list = os.listdir(data_path)
     print(f'변환 할 폴더 갯수 : {len(data_list)}')
 
+    X_index = []
     # 폴더 찾기
     for i, d in enumerate(data_list):
         file_lsit = os.listdir(os.path.join(data_path, d))
@@ -92,44 +100,50 @@ def main():
 
         # 파일 찾기
         for j, f in enumerate(file_lsit):
-            # 찾은 파일들 데이터 프레임에 넣기
-            df = pd.DataFrame()
-            opus_data = read_file(os.path.join(data_path, d, f))
-            ab = opus_data['AB'][:-1]
-            df["x"] = x_data
-            df[f] = ab
-            # 인덱스 자르기
-            df = df[(df["x"] >= 800) & (df["x"] <= 2000)]
+            try:
 
-            # Extinction 구하기
-            df['Extinction'] = 1-df[f]
+                # 찾은 파일들 데이터 프레임에 넣기
+                df = pd.DataFrame()
+                opus_data = read_file(os.path.join(data_path, d, f))
+                ab = opus_data['AB'][:-1]
+                df["x"] = x_data
+                df[f] = ab
+                # 인덱스 자르기
+                df = df[(df["x"] >= 800) & (df["x"] <= 2000)]
+                X_index = df["x"]
 
-            params_list = []
+                # Extinction 구하기
+                df['Extinction'] = 1-df[f]
 
-            # GaussAMP Fitting
-            gauss_amp_popt, gauss_amp_pcov = curve_fit(
-                GaussAmp, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200])
+                params_list = []
 
-            params_list += gauss_amp_popt.tolist()
-            params_list.append(np.sqrt(np.diag(gauss_amp_pcov)))
-            # Lorentz Fitting
-            lorentz_popt, lorentz_pcov = curve_fit(
-                Lorentz, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200])
+                # GaussAMP Fitting
+                gauss_amp_popt, gauss_amp_pcov = curve_fit(
+                    GaussAmp, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200], maxfev=5000)
 
-            params_list += lorentz_popt.tolist()
-            params_list.append(np.sqrt(np.diag(lorentz_pcov)))
+                params_list += gauss_amp_popt.tolist()
+                params_list.append(np.sqrt(np.diag(gauss_amp_pcov)))
+                # Lorentz Fitting
+                lorentz_popt, lorentz_pcov = curve_fit(
+                    Lorentz, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200], maxfev=5000)
 
-            df['GaussAmp'] = df['Extinction'] - gauss_amp_popt[0]
-            df['Lorentz'] = df['Extinction'] - lorentz_popt[0]
+                params_list += lorentz_popt.tolist()
+                params_list.append(np.sqrt(np.diag(lorentz_pcov)))
 
-            df_gauss_amp[f] = df['GaussAmp']
-            df_lorentz[f] = df['Lorentz']
+                df['GaussAmp'] = df['Extinction'] - gauss_amp_popt[0]
+                df['Lorentz'] = df['Extinction'] - lorentz_popt[0]
 
-            df.set_index(keys=["x"], drop=True, inplace=True)
-            df_params[f] = params_list
+                df_gauss_amp[f] = df['GaussAmp']
+                df_lorentz[f] = df['Lorentz']
 
-            # 기본파일
-            # df.to_csv(os.path.join(result_save_path, f'{f}.csv'))
+                df.set_index(keys=["x"], drop=True, inplace=True)
+                df_params[f] = params_list
+
+                # 기본파일
+                # df.to_csv(os.path.join(result_save_path, f'{f}.csv'))
+
+            except:
+                logging.error(f"Error Fitting the file: {f}")
 
         # GaussAmp 평균값 구하기
         df_gauss_amp['mean'] = df_gauss_amp.mean(axis=1)
@@ -141,6 +155,7 @@ def main():
         # Lorentz 표준편차 구하기
         df_lorentz['std'] = df_lorentz.std(axis=1)
 
+        df_total["x"] = X_index
         df_total['GaussAmp_mean'] = df_gauss_amp['mean']
         df_total['GaussAmp_std'] = df_gauss_amp['std']
         df_total['Lorentz_mean'] = df_lorentz['mean']
@@ -148,7 +163,7 @@ def main():
 
         # 데이터 저장
         # 최종파일
-        df_total.to_csv(os.path.join(result_save_path, f'{d}.csv'))
+        df_total.to_csv(os.path.join(result_save_path, f'{d}.csv'), index=None)
 
         # 파라미터 파일
         df_params.to_csv(os.path.join(result_save_path, f'{d}_p.csv'))
@@ -159,9 +174,9 @@ def main():
         # 로렌츠 피팅파일
         # df_lorentz.to_csv(os.path.join(result_save_path, f'{d}_l.csv'))
 
-    og = OriginLabGraphing(data_path=result_save_path,
-                           result_path=os.path.join(work_path, 'origin_result'))
-    og.graphing()
+    # og = OriginLabGraphing(data_path=result_save_path,
+    #                        result_path=os.path.join(work_path, 'origin_result'))
+    # og.graphing()
 
     end_time = time.time()
     work_time = end_time - start_time

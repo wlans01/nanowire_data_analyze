@@ -87,10 +87,10 @@ def main():
         # 데이터 저장
         df.to_csv(os.path.join(result_save_path, f'{d}.csv'))
 
-    og = OriginLabGraphing(data_path=result_save_path,
-                           result_path=os.path.join(work_path, 'origin_result'))
+    # og = OriginLabGraphing(data_path=result_save_path,
+    #                        result_path=os.path.join(work_path, 'origin_result'))
 
-    og.graphing()
+    # og.graphing()
 
     end_time = time.time()
     work_time = end_time - start_time
