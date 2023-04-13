@@ -7,7 +7,7 @@ from originlab_graphing import OriginLabGraphing
 from scipy.optimize import curve_fit
 import numpy as np
 import matplotlib.pyplot as plt
-
+import logging
 '''
 FTIR 데이터를 정리하는 코드
 고정된 x 값에 대해 y값만 붙여서 저장
@@ -28,6 +28,12 @@ Bruker OPUS Reader 모듈을 사용해서 opus 뷰어 실행할 필요 없이 �
 
 '''
 
+# Set up logging
+timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_filename = f'error_log_{timestamp}.log'
+
+logging.basicConfig(filename=log_filename, level=logging.ERROR,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 # 폴더 파일 만들기
 
 
@@ -63,6 +69,7 @@ def Lorentz(x, y_0, a, x_c, w):
 
 
 def main():
+
     start_time = time.time()
 
     # 경로 설정
@@ -77,62 +84,70 @@ def main():
 
     # x 데어터 얻기 (wavenumbers)
     with open('x_data.txt', 'r') as f:
-        x_data = f.read().splitlines()
+        read_data = f.read().splitlines()
+        x_data = [float(i) for i in read_data]
 
     # data폴더에서 작업파일 얻기  (data폴더에는 1-1등 정리된 폴더안에 실험결과 파일이 있어야함)
-    data_list = os.listdir()
+    data_list = os.listdir(data_path)
     print(f'변환 할 폴더 갯수 : {len(data_list)}')
-
     # 폴더 찾기
+    data_list = os.listdir(data_path)
+    # 폴더 찾기
+    for i, d in enumerate(data_list):
+        file_lsit = os.listdir(os.path.join(data_path, d))
+        for j, f in enumerate(file_lsit):
+            try:  # 찾은 파일들 데이터 프레임에 넣기
+                df = pd.DataFrame()
+                opus_data = read_file(os.path.join(data_path, d, f))
+                ab = opus_data['AB'][:-1]
+                df["x"] = x_data
+                df[f] = ab
+                # 인덱스 자르기
+                df = df[(df["x"] >= 800) & (df["x"] <= 2000)]
+                X_index = df["x"]
 
-    # 파일 찾기
+                # Extinction 구하기
+                df['Extinction'] = 1-df[f]
 
-    # 데이터 프레임 만들기 빈
-    df = pd.read_csv("test_data.txt",
-                     header=None, delimiter="\t")
+                X = df["x"].to_numpy()
+                Y = df['Extinction'].to_numpy()
 
-    # 찾은 파일들 데이터 프레임에 넣기
-    # ab = opus_data['AB'][:-1]
-    # df[f] = ab
-    df = df[(df[0] >= 800) & (df[0] <= 2000)]
+                # GaussAMP Fitting
+                gauss_amp_popt, gauss_amp_pcov = curve_fit(
+                    GaussAmp, X, Y, p0=[0.005, 0.005, 1000, 200])
 
-    # Extinction 구하기
-    df['Extinction'] = 1-df[1]
+                lorentz_popt, lorentz_pcov = curve_fit(
+                    Lorentz, X, Y, p0=[0.005, 0.005, 1000, 200])
 
-    X = df[0].to_numpy()
-    Y = df['Extinction'].to_numpy()
+                df['GaussAmp'] = df['Extinction'] - gauss_amp_popt[0]
+                df['Lorentz'] = df['Extinction'] - lorentz_popt[0]
 
-    # GaussAMP Fitting
-    gauss_amp_popt, gauss_amp_pcov = curve_fit(
-        GaussAmp, X, Y, p0=[0.005, 0.005, 1000, 200])
+                print(gauss_amp_popt)
+                print(np.sqrt(np.diag(gauss_amp_pcov)))
+                print("=====================================")
+                print(lorentz_popt)
+                print(np.sqrt(np.diag(lorentz_pcov)))
 
-    lorentz_popt, lorentz_pcov = curve_fit(
-        Lorentz, X, Y, p0=[0.005, 0.005, 1000, 200])
+                plt.title(f)
+                plt.plot(X, Y, label="original data")
+                plt.plot(X, GaussAmp(X, *gauss_amp_popt),
+                         label="GaussAmp fitting data")
+                plt.plot(X, Lorentz(X, *lorentz_popt),
+                         label="Lorentz fitting data")
+                plt.legend()
+                plt.show()
 
-    df['GaussAmp'] = df['Extinction'] - gauss_amp_popt[0]
-    df['Lorentz'] = df['Extinction'] - lorentz_popt[0]
+                plt.title(f)
+                plt.plot(X, Y, label="original data")
+                plt.plot(X, df["GaussAmp"],
+                         label="GaussAmp data")
+                plt.plot(X, df["Lorentz"],
+                         label="Lorentz data")
+                plt.legend()
+                plt.show()
 
-    print(gauss_amp_popt)
-    print(np.sqrt(np.diag(gauss_amp_pcov)))
-    print("=====================================")
-    print(lorentz_popt)
-    print(np.sqrt(np.diag(lorentz_pcov)))
-
-    plt.plot(X, Y, label="original data")
-    plt.plot(X, GaussAmp(X, *gauss_amp_popt),
-             label="GaussAmp fitting data")
-    plt.plot(X, Lorentz(X, *lorentz_popt),
-             label="Lorentz fitting data")
-    plt.legend()
-    plt.show()
-
-    plt.plot(X, Y, label="original data")
-    plt.plot(X, df["GaussAmp"],
-             label="GaussAmp data")
-    plt.plot(X, df["Lorentz"],
-             label="Lorentz data")
-    plt.legend()
-    plt.show()
+            except:
+                logging.exception(f'Error 파일 피팅,그리기 실패 {f}')
 
     # 데이터 저장
     # df.to_csv(os.path.join(result_save_path, f'{d}.csv'))
