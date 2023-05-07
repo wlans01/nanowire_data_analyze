@@ -3,10 +3,12 @@ import pandas as pd
 import os
 import datetime
 import time
-from originlab_graphing import OriginLabGraphing
 import numpy as np
 from scipy.optimize import curve_fit
+from originlab_graphing import OriginLabGraphing
 import logging
+from tqdm import tqdm
+from Fitting_Data import fitting_data
 
 '''
 FTIR 데이터를 정리하는 코드
@@ -29,7 +31,7 @@ Bruker OPUS Reader 모듈을 사용해서 opus 뷰어 실행할 필요 없이 �
 '''
 # Set up logging
 timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-log_filename = f'error_log_{timestamp}.log'
+log_filename = f'error//error_log_{timestamp}.log'
 
 logging.basicConfig(filename=log_filename, level=logging.ERROR,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,29 +56,85 @@ def create_file_or_folder(name, path, is_folder=False):
     else:
         print(f"{name} already exists at {path}")
 
-# 피팅 함수 정의
+
+def fit_and_save_data(file_lsit, data_path, x_data, result_save_path, params_save_path, file_path, fit_function, p0=None, range=[800, 2000], debug=False):
+    ''''''
+    # 데이터 프레임 만들기 빈
+    df_data = pd.DataFrame(index=None)
+    df_params = pd.DataFrame(index=None)
+    X_index = []
+    # 파일 찾기
+    for j, f in enumerate(file_lsit):
+        try:
+
+            # 찾은 파일들 데이터 프레임에 넣기
+            df = pd.DataFrame()
+            opus_data = read_file(os.path.join(data_path, file_path, f))
+            ab = opus_data['AB'][:-1]
+            df["x"] = x_data
+            df[f] = ab
+            # 인덱스 자르기
+            df = df[(df["x"] >= range[0]) & (df["x"] <= range[1])]
+            X_index = df["x"]
+
+            # Extinction 구하기
+            df['Extinction'] = 1-df[f]
+
+            params_list = []
+
+            # Function Fitting
+            popt, pcov = curve_fit(
+                fit_function, df["x"], df['Extinction'], p0=p0, maxfev=5000)
+
+            params_list += popt.tolist()
+            params_list.append(np.sqrt(np.diag(pcov)))
+
+            df[fit_function.__name__] = df['Extinction'] - popt[0]
+
+            df_data[f] = df[fit_function.__name__]
+
+            df.set_index(keys=["x"], drop=True, inplace=True)
+            df_params[f] = params_list
+
+            # 기본파일
+            if debug:
+                df.to_csv(os.path.join(result_save_path, f'{f}.csv'))
+
+        except:
+            logging.error(f"Error Fitting the file: {f}")
+
+    # GaussAmp 평균값 구하기
+    df_data['mean'] = df_data.mean(axis=1)
+    # GaussAmp 표준편차 구하기
+    df_data['std'] = df_data.std(axis=1)
+
+    df_data["X"] = X_index
+
+    # 파라미터 파일
+    df_params.to_csv(os.path.join(params_save_path,
+                     f'{file_path}_{fit_function.__name__}_params.csv'), index=False)
+
+    # 가우시안 피팅파일
+    df_data.to_csv(os.path.join(result_save_path,
+                   f'{file_path}_{fit_function.__name__}_result.csv'), index=False)
 
 
-def GaussAmp(x, y_0, a, x_c, w):
-    return y_0 + a * np.exp(-0.5*((x-x_c)/w) ** 2)
-
-
-def Lorentz(x, y_0, a, x_c, w):
-    return y_0 + (2*a/np.pi)*(w/(4*(x-x_c) ** 2+w ** 2))
-
-
-def main():
+def main(fit_function, fit_function_p0, fit_function_range):
     start_time = time.time()
 
     # 경로 설정
     work_path = os.getcwd()
     data_path = os.path.join(work_path, 'data')
     result_path = os.path.join(work_path, 'result')
+    origin_result_path = os.path.join(work_path, 'origin_result')
 
     # result폴더에 결과 폴더 생성
-    date = datetime.datetime.now().strftime('%Y-%m-%d')
-    create_file_or_folder(date, result_path, is_folder=True)
-    result_save_path = os.path.join(result_path, date)
+    result_save_path = os.path.join(
+        result_path, fit_function.__name__, "result")
+    params_save_path = os.path.join(
+        result_path, fit_function.__name__, "params")
+    create_file_or_folder(result_save_path, result_path, is_folder=True)
+    create_file_or_folder(params_save_path, result_path, is_folder=True)
 
     # x 데어터 얻기 (wavenumbers)
     with open('x_data.txt', 'r') as f:
@@ -87,96 +145,22 @@ def main():
     data_list = os.listdir(data_path)
     print(f'변환 할 폴더 갯수 : {len(data_list)}')
 
-    X_index = []
     # 폴더 찾기
-    for i, d in enumerate(data_list):
-        file_lsit = os.listdir(os.path.join(data_path, d))
+    for file_name in tqdm(data_list):
+        file_lsit = os.listdir(os.path.join(data_path, file_name))
 
-        # 데이터 프레임 만들기 빈
-        df_total = pd.DataFrame(index=None)
-        df_gauss_amp = pd.DataFrame(index=None)
-        df_lorentz = pd.DataFrame(index=None)
-        df_params = pd.DataFrame(index=None)
+        fit_and_save_data(file_lsit, data_path, x_data,
+                          result_save_path, params_save_path, file_name, fit_function, fit_function_p0, fit_function_range)
 
-        # 파일 찾기
-        for j, f in enumerate(file_lsit):
-            try:
+    print("""
+    파일 피팅완료
+    오리진 그래프 그리기중...
+    """)
+    # 오리진 그리기
+    og = OriginLabGraphing(result_path, origin_result_path,
+                           f"{fit_function.__name__}_result")
 
-                # 찾은 파일들 데이터 프레임에 넣기
-                df = pd.DataFrame()
-                opus_data = read_file(os.path.join(data_path, d, f))
-                ab = opus_data['AB'][:-1]
-                df["x"] = x_data
-                df[f] = ab
-                # 인덱스 자르기
-                df = df[(df["x"] >= 800) & (df["x"] <= 2000)]
-                X_index = df["x"]
-
-                # Extinction 구하기
-                df['Extinction'] = 1-df[f]
-
-                params_list = []
-
-                # GaussAMP Fitting
-                gauss_amp_popt, gauss_amp_pcov = curve_fit(
-                    GaussAmp, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200], maxfev=5000)
-
-                params_list += gauss_amp_popt.tolist()
-                params_list.append(np.sqrt(np.diag(gauss_amp_pcov)))
-                # Lorentz Fitting
-                lorentz_popt, lorentz_pcov = curve_fit(
-                    Lorentz, df["x"], df['Extinction'], p0=[0.005, 0.005, 1000, 200], maxfev=5000)
-
-                params_list += lorentz_popt.tolist()
-                params_list.append(np.sqrt(np.diag(lorentz_pcov)))
-
-                df['GaussAmp'] = df['Extinction'] - gauss_amp_popt[0]
-                df['Lorentz'] = df['Extinction'] - lorentz_popt[0]
-
-                df_gauss_amp[f] = df['GaussAmp']
-                df_lorentz[f] = df['Lorentz']
-
-                df.set_index(keys=["x"], drop=True, inplace=True)
-                df_params[f] = params_list
-
-                # 기본파일
-                # df.to_csv(os.path.join(result_save_path, f'{f}.csv'))
-
-            except:
-                logging.error(f"Error Fitting the file: {f}")
-
-        # GaussAmp 평균값 구하기
-        df_gauss_amp['mean'] = df_gauss_amp.mean(axis=1)
-        # GaussAmp 표준편차 구하기
-        df_gauss_amp['std'] = df_gauss_amp.std(axis=1)
-
-        # Lorentz 평균값 구하기
-        df_lorentz['mean'] = df_lorentz.mean(axis=1)
-        # Lorentz 표준편차 구하기
-        df_lorentz['std'] = df_lorentz.std(axis=1)
-
-        df_total["x"] = X_index
-        df_total['GaussAmp_mean'] = df_gauss_amp['mean']
-        df_total['GaussAmp_std'] = df_gauss_amp['std']
-        df_total['Lorentz_mean'] = df_lorentz['mean']
-        df_total['Lorentz_std'] = df_lorentz['std']
-
-        # 데이터 저장
-        # 최종파일
-        df_total.to_csv(os.path.join(result_save_path, f'{d}.csv'), index=None)
-
-        # 파라미터 파일
-        df_params.to_csv(os.path.join(result_save_path, f'{d}_p.csv'))
-
-        # 가우시안 피팅파일
-        # df_gauss_amp.to_csv(os.path.join(result_save_path, f'{d}_g.csv'))
-
-        # 로렌츠 피팅파일
-        # df_lorentz.to_csv(os.path.join(result_save_path, f'{d}_l.csv'))
-
-    # og = OriginLabGraphing(data_path=result_save_path,
-    #                        result_path=os.path.join(work_path, 'origin_result'))
-    # og.graphing()
+    og.graphing(fit_function_range)
 
     end_time = time.time()
     work_time = end_time - start_time
@@ -184,4 +168,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+
+    print("""
+    피팅할 함수의 번호를 입력해주세요
+    """)
+    for i, key in enumerate(fitting_data):
+        print(f"{i}. {key}")
+
+    func_num = int(input("함수번호 : "))
+
+    main(
+        fitting_data[list(fitting_data.keys())[func_num]]["func"],
+        fitting_data[list(fitting_data.keys())[func_num]]["p0"],
+        fitting_data[list(fitting_data.keys())[func_num]]["range"]
+    )
